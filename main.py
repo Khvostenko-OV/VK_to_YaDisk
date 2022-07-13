@@ -1,5 +1,4 @@
-import requests
-import time
+import requests, json, time
 
 VK_API_URL = 'https://api.vk.com/method/'
 YA_API_URL = 'https://cloud-api.yandex.net/v1/disk/resources/'
@@ -37,22 +36,18 @@ class VKuser:
 
 class YaDiskUploader:
     def __init__(self, token):
-        self.token = token
+        self.headers = {'Content-Type': 'application/json', 'Authorization': 'OAuth ' + token}
 
-    def make_dir(self, ya_disk_file_path):
-        headers = {'Content-Type': 'application/json', 'Authorization': 'OAuth ' + self.token}
-        params = {'path': ya_disk_file_path}
-        requests.put(YA_API_URL, headers=headers, params=params)
+    def make_dir(self, file_path):
+        return requests.put(YA_API_URL, headers=self.headers, params={'path': file_path}).status_code
 
-    def upload(self, file_path, file_data):
-        headers = {'Content-Type': 'application/json', 'Authorization': 'OAuth ' + self.token}
-        params = {'path': file_path, 'overwrite': 'true'}
-        url = requests.get(YA_API_URL + 'upload', headers=headers, params=params)
-        if url.status_code == 200:
-            resp = requests.put(url.json()['href'], data=file_data)
-            return resp.status_code
+    def upload(self, file_path, file_url):
+        requests.delete(YA_API_URL, headers=self.headers, params={'path': file_path, 'permanently': 'true'})
+        resp = requests.post(YA_API_URL + 'upload', headers=self.headers, params={'path': file_path, 'url': file_url})
+        if resp.status_code == 202:
+            return requests.get(YA_API_URL + 'download', headers=self.headers, params={'path': file_path}).status_code
         else:
-            return url.status_code
+            return resp.status_code
 
 
 with open('tt.txt') as file:
@@ -97,27 +92,22 @@ for i in range(len(fotos)-1):
             fotos[i+1]['name'] = str(fotos[i+1]['likes']) + '-' + fotos[i+1]['date'] + '.jpg'
 
 ya_disk = YaDiskUploader(y_token)
-ya_disk.make_dir(person.path)
+code = ya_disk.make_dir(person.path)
+if code != 201 and code != 409:
+    print('Ошибка создания папки -', code)
+    exit(code)
 result = []
 i = 0
 for foto in fotos:
     i += 1
-    print(i, 'фото - Скачиваем.', end='')
-    jpeg = requests.get(foto['url'])
-    if jpeg.status_code == 200:
-        print(' Загружаем на YandexDisk.', end='')
-        code = ya_disk.upload(person.path + foto['name'], jpeg.content)
-        if code == 201:
-            result.append(' {"file_name": "' + foto['name'] + '",\n')
-            result.append('  "size": "' + str(foto['height']) + 'x' + str(foto['width']) + '"},\n')
-            print(' Ok')
-        else:
-            print(' Ошибка загрузки -', code)
+    print(i, 'фото - Загружаем на YandexDisk.', end='')
+    code = ya_disk.upload(person.path + foto['name'], foto['url'])
+    if code == 200:
+        result.append({"file_name": foto['name'], "size": str(foto['height']) + 'x' + str(foto['width'])})
+        print(' Ok')
     else:
-        print(' Ошибка скачивания -', jpeg.status_code)
-print('Загружено', len(result) // 2, 'фото')
+        print(' Ошибка -', code)
+print('Загружено', len(result), 'фото')
 
-result[0] = '[' + result[0][1:]
-result[-1] = result[-1][:-2] + ']'
 with open('result.json', 'w') as file:
-    file.writelines(result)
+    json.dump(result, file, indent=2)
